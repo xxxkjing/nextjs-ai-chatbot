@@ -58,7 +58,6 @@ export function getStreamContext() {
       }
     }
   }
-
   return globalStreamContext;
 }
 
@@ -86,52 +85,37 @@ export async function POST(request: Request) {
     } = requestBody;
 
     const session = await auth();
-
     if (!session?.user) {
       return new ChatSDKError('unauthorized:chat').toResponse();
     }
 
     const userType: UserType = session.user.type;
-
     const messageCount = await getMessageCountByUserId({
       id: session.user.id,
       differenceInHours: 24,
     });
-
     if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
       return new ChatSDKError('rate_limit:chat').toResponse();
     }
 
     const chat = await getChatById({ id });
-
     if (!chat) {
-      const title = await generateTitleFromUserMessage({
-        message,
-      });
-
+      const title = await generateTitleFromUserMessage({ message });
       await saveChat({
         id,
         userId: session.user.id,
         title,
         visibility: selectedVisibilityType,
       });
-    } else {
-      if (chat.userId !== session.user.id) {
-        return new ChatSDKError('forbidden:chat').toResponse();
-      }
+    } else if (chat.userId !== session.user.id) {
+      return new ChatSDKError('forbidden:chat').toResponse();
     }
 
     const messagesFromDb = await getMessagesByChatId({ id });
     const uiMessages = [...convertToUIMessages(messagesFromDb), message];
-
     const { longitude, latitude, city, country } = geolocation(request);
 
-    const requestHints: RequestHints = {
-      longitude,
-      latitude,
-      city,
-      country,
-    };
+    const requestHints: RequestHints = { longitude, latitude, city, country };
 
     await saveMessages({
       messages: [
@@ -170,10 +154,7 @@ export async function POST(request: Request) {
             getWeather,
             createDocument: createDocument({ session, dataStream }),
             updateDocument: updateDocument({ session, dataStream }),
-            requestSuggestions: requestSuggestions({
-              session,
-              dataStream,
-            }),
+            requestSuggestions: requestSuggestions({ session, dataStream }),
           },
           experimental_telemetry: {
             isEnabled: isProductionEnvironment,
@@ -182,20 +163,17 @@ export async function POST(request: Request) {
         });
 
         result.consumeStream();
-
         dataStream.merge(
-          result.toUIMessageStream({
-            sendReasoning: true,
-          }),
+          result.toUIMessageStream({ sendReasoning: true })
         );
       },
       generateId: generateUUID,
       onFinish: async ({ messages }) => {
         await saveMessages({
-          messages: messages.map((message) => ({
-            id: message.id,
-            role: message.role,
-            parts: message.parts,
+          messages: messages.map((m) => ({
+            id: m.id,
+            role: m.role,
+            parts: m.parts,
             createdAt: new Date(),
             attachments: [],
             chatId: id,
@@ -208,44 +186,56 @@ export async function POST(request: Request) {
     });
 
     const streamContext = getStreamContext();
-
     if (streamContext) {
       return new Response(
         await streamContext.resumableStream(streamId, () =>
-          stream.pipeThrough(new JsonToSseTransformStream()),
-        ),
+          stream.pipeThrough(new JsonToSseTransformStream())
+        )
       );
-    } else {
-      return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
     }
+    return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
+
   } catch (error) {
     if (error instanceof ChatSDKError) {
       return error.toResponse();
     }
+    console.error('Unexpected error in POST /api/chat:', error);
+    return new Response(
+      JSON.stringify({ error: 'internal_server_error', message: 'Unexpected server error.' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
   }
 }
 
 export async function DELETE(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const id = searchParams.get('id');
+  try {
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
+    if (!id) {
+      return new ChatSDKError('bad_request:api').toResponse();
+    }
 
-  if (!id) {
-    return new ChatSDKError('bad_request:api').toResponse();
+    const session = await auth();
+    if (!session?.user) {
+      return new ChatSDKError('unauthorized:chat').toResponse();
+    }
+
+    const chat = await getChatById({ id });
+    if (chat.userId !== session.user.id) {
+      return new ChatSDKError('forbidden:chat').toResponse();
+    }
+
+    const deletedChat = await deleteChatById({ id });
+    return Response.json(deletedChat, { status: 200 });
+
+  } catch (error) {
+    if (error instanceof ChatSDKError) {
+      return error.toResponse();
+    }
+    console.error('Unexpected error in DELETE /api/chat:', error);
+    return new Response(
+      JSON.stringify({ error: 'internal_server_error', message: 'Unexpected server error.' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
   }
-
-  const session = await auth();
-
-  if (!session?.user) {
-    return new ChatSDKError('unauthorized:chat').toResponse();
-  }
-
-  const chat = await getChatById({ id });
-
-  if (chat.userId !== session.user.id) {
-    return new ChatSDKError('forbidden:chat').toResponse();
-  }
-
-  const deletedChat = await deleteChatById({ id });
-
-  return Response.json(deletedChat, { status: 200 });
 }

@@ -3,7 +3,7 @@ import {
   extractReasoningMiddleware,
   wrapLanguageModel,
 } from 'ai';
-import { xai } from '@ai-sdk/xai';
+import { createOpenAI } from '@ai-sdk/openai';
 import {
   artifactModel,
   chatModel,
@@ -11,6 +11,12 @@ import {
   titleModel,
 } from './models.test';
 import { isTestEnvironment } from '../constants';
+
+// 初始化 OpenAI Provider
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY!,
+  baseURL: process.env.OPENAI_BASE_URL!,
+});
 
 export const myProvider = isTestEnvironment
   ? customProvider({
@@ -23,15 +29,19 @@ export const myProvider = isTestEnvironment
     })
   : customProvider({
       languageModels: {
-        'chat-model': xai('grok-2-vision-1212'),
+        'chat-model': openai(process.env.OPENAI_DEFAULT_MODEL || 'gpt-4'),
         'chat-model-reasoning': wrapLanguageModel({
-          model: xai('grok-3-mini-beta'),
+          model: openai(process.env.OPENAI_REASONING_MODEL || 'gpt-4'),
           middleware: extractReasoningMiddleware({ tagName: 'think' }),
         }),
-        'title-model': xai('grok-2-1212'),
-        'artifact-model': xai('grok-2-1212'),
+        'title-model': openai(process.env.OPENAI_TITLE_MODEL || 'gpt-3.5-turbo'),
+        'artifact-model': openai(
+          process.env.OPENAI_ARTIFACT_MODEL || 'gpt-3.5-turbo'
+        ),
       },
       imageModels: {
-        'small-model': xai.imageModel('grok-2-image'),
+        'small-model': openai.imageModel(
+          process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1'
+        ),
       },
     });
